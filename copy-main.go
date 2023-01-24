@@ -175,7 +175,7 @@ func initMinioClient(ctx *cli.Context, accessKey, secretKey, minioBucket, urlStr
 				// Can't use TLSv1.1 because of RC4 cipher usage
 				MinVersion:         tls.VersionTLS12,
 				NextProtos:         []string{"http/1.1"},
-				InsecureSkipVerify: ctx.GlobalBool("insecure"),
+				InsecureSkipVerify: ctx.Bool("insecure"),
 			},
 			// Set this value so that the underlying transport round-tripper
 			// doesn't try to auto decode the body of objects with
