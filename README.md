@@ -6,3 +6,5 @@
 
 ### Now do a copy from dr -> primary
 ./drrepltool copy --endpoint http://primary:9002 --ak minio --sk minio123 --src-endpoint http://dr:9004 --src-access-key minio --src-secret-key minio123 --data-dir /tmp/data --bucket bucket --src-bucket bucket
+
+(add '--input-format s3-check-md5' if you want to parse s3-check-md5 output instead)
