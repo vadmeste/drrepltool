@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,7 +53,7 @@ var srcFlags = []cli.Flag{
 	},
 	cli.StringFlag{
 		Name:  "src-bucket",
-		Usage: "S3 bucket",
+		Usage: "source bucket",
 	},
 	cli.IntFlag{
 		Name:  "skip, s",
@@ -66,6 +67,11 @@ var srcFlags = []cli.Flag{
 	cli.StringFlag{
 		Name:  "input-file",
 		Usage: "file with list of entries to copy from DR",
+	},
+	cli.StringFlag{
+		Name:  "input-format",
+		Usage: "drrepl | s3-check-md5",
+		Value: "drrepl",
 	},
 }
 
@@ -90,11 +96,17 @@ var copyCmd = cli.Command{
 	  --src-endpoint https://minio1 --src-access-key minio1 --src-secret-key minio123 --src-bucket srcbucket  
   `,
 }
+
 var (
 	srcClient *miniogo.Client
 	tgtClient *miniogo.Client
 	err       error
+	re        *regexp.Regexp
 )
+
+func init() {
+	re = regexp.MustCompile(`.*CORRUPTED object: (.*)$`)
+}
 
 func checkCopyArgsAndInit(ctx *cli.Context) {
 	debug = ctx.Bool("debug")
@@ -206,12 +218,14 @@ func copyAction(cliCtx *cli.Context) error {
 	copyState = newcopyState(ctx)
 	copyState.init(ctx)
 	skip := cliCtx.Int("skip")
+	inputFormat := cliCtx.String("input-format")
 	dryRun = cliCtx.Bool("fake")
 	start := time.Now()
 	file, err := os.Open(path.Join(dirPath, objListFile))
 	if err != nil {
 		console.Fatalln("--input-file needs to be specified", err)
 	}
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		o := scanner.Text()
@@ -219,16 +233,36 @@ func copyAction(cliCtx *cli.Context) error {
 			skip--
 			continue
 		}
-		slc := strings.SplitN(o, ",", 4)
-		if len(slc) < 3 || len(slc) > 4 {
-			logDMsg(fmt.Sprintf("error processing line :%s ", o), nil)
+		var slc []string
+		switch inputFormat {
+		case "drrepl":
+			slc = strings.SplitN(o, ",", 4)
+			if len(slc) < 3 || len(slc) > 4 {
+				slc = nil
+			}
+		case "s3-check-md5":
+			matches := re.FindAllStringSubmatch(o, -1)
+			if len(matches[0]) >= 1 {
+				slc = strings.SplitN(matches[0][1], "/", 2)
+				// Version and Delete Marker are not supported yet
+				slc = append(slc, "")
+				slc = append(slc, "")
+			}
+
 		}
+
+		if len(slc) == 0 {
+			logDMsg(fmt.Sprintf("error processing line :%s ", o), nil)
+			continue
+		}
+
 		obj := objInfo{
 			bucket:       strings.TrimSpace(slc[0]),
 			object:       strings.TrimSpace(slc[1]),
 			versionID:    strings.TrimSpace(slc[2]),
 			deleteMarker: strings.TrimSpace(slc[3]) == "true",
 		}
+
 		copyState.queueUploadTask(obj)
 		logDMsg(fmt.Sprintf("adding %s to copy queue", o), nil)
 	}
