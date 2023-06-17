@@ -80,6 +80,7 @@ var (
 	debug, logFlag bool
 	versions       bool
 	dirPath        string
+	format         string
 )
 
 const (

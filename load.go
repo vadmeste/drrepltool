@@ -99,7 +99,13 @@ func (c *CopyState) addWorker(ctx context.Context) {
 					return
 				}
 				logDMsg(fmt.Sprintf("Copying...%s", obj), nil)
-				if err := copyObject(ctx, obj); err != nil {
+				var err error
+				if obj.versionID != "" {
+					err = replicateObject(ctx, obj)
+				} else {
+					err = copyObject(ctx, obj)
+				}
+				if err != nil {
 					c.incFailCount()
 					logMsg(fmt.Sprintf("error copying object %s: %s", obj, err))
 					c.failedCh <- copyErr{object: obj, err: err}
@@ -194,7 +200,49 @@ func isMethodNotAllowedErr(err error) bool {
 	}
 	return false
 }
+
 func copyObject(ctx context.Context, si objInfo) error {
+	obj, err := srcClient.GetObject(ctx, si.bucket, si.object, miniogo.GetObjectOptions{})
+	if err != nil {
+		return err
+	}
+
+	oi, err := obj.Stat()
+	if err != nil {
+		return err
+	}
+	defer obj.Close()
+	if dryRun {
+		logMsg(fmt.Sprintf("%s", oi.Key))
+		return nil
+	}
+
+	enc, ok := oi.Metadata[ContentEncoding]
+	if !ok {
+		enc = oi.Metadata[strings.ToLower(ContentEncoding)]
+	}
+
+	uoi, err := tgtClient.PutObject(ctx, tgtBucket, oi.Key, obj, oi.Size, miniogo.PutObjectOptions{
+		UserMetadata:    oi.UserMetadata,
+		ContentType:     oi.ContentType,
+		StorageClass:    oi.StorageClass,
+		UserTags:        oi.UserTags,
+		ContentEncoding: strings.Join(enc, ","),
+	})
+	if err != nil {
+		logDMsg("upload to minio failed for "+oi.Key, err)
+		return err
+	}
+	if uoi.Size != oi.Size {
+		err = fmt.Errorf("expected size %d, uploaded %d", oi.Size, uoi.Size)
+		logDMsg("upload to minio failed for "+oi.Key, err)
+		return err
+	}
+	logDMsg("Uploaded "+uoi.Key+" successfully", nil)
+	return nil
+}
+
+func replicateObject(ctx context.Context, si objInfo) error {
 	obj, err := srcClient.GetObject(ctx, si.bucket, si.object, miniogo.GetObjectOptions{
 		VersionID: si.versionID,
 	})
