@@ -73,6 +73,10 @@ var srcFlags = []cli.Flag{
 		Usage: "drrepl | s3-check-md5",
 		Value: "drrepl",
 	},
+	cli.BoolFlag{
+		Name:  "simple-copy",
+		Usage: "enforce a simple copy of the object",
+	},
 }
 
 var copyCmd = cli.Command{
@@ -215,15 +219,42 @@ func copyAction(cliCtx *cli.Context) error {
 		return fmt.Errorf("could not initialize tgt client %w", err)
 	}
 	ctx := context.Background()
-	copyState = newcopyState(ctx)
-	copyState.init(ctx)
 	skip := cliCtx.Int("skip")
 	inputFormat := cliCtx.String("input-format")
+	inputFile := cliCtx.String("input-file")
 	dryRun = cliCtx.Bool("fake")
 	start := time.Now()
-	file, err := os.Open(path.Join(dirPath, objListFile))
-	if err != nil {
-		console.Fatalln("--input-file needs to be specified", err)
+
+	var replicate bool
+	switch inputFormat {
+	case "drrepl":
+		replicate = true
+	case "s3-check-md5":
+		replicate = false
+	default:
+		console.Fatalln("unknown --input-format", inputFormat)
+	}
+
+	if cliCtx.IsSet("simple-copy") {
+		replicate = !cliCtx.Bool("simple-copy")
+	}
+
+	copyState = newcopyState(ctx, replicate)
+	copyState.init(ctx)
+
+	var err error
+	var file *os.File
+
+	if inputFile == "" {
+		file, err = os.Open(path.Join(dirPath, objListFile))
+		if err != nil {
+			console.Fatalln("--input-file needs to be specified", err)
+		}
+	} else {
+		file, err = os.Open(inputFile)
+		if err != nil {
+			console.Fatalln(err)
+		}
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -242,7 +273,7 @@ func copyAction(cliCtx *cli.Context) error {
 			}
 		case "s3-check-md5":
 			matches := re.FindAllStringSubmatch(o, -1)
-			if len(matches[0]) >= 1 {
+			if len(matches) > 0 && len(matches[0]) >= 1 {
 				slc = strings.SplitN(matches[0][1], "/", 2)
 				// Version and Delete Marker are not supported yet
 				slc = append(slc, "")
