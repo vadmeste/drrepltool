@@ -70,7 +70,7 @@ var srcFlags = []cli.Flag{
 	},
 	cli.StringFlag{
 		Name:  "input-format",
-		Usage: "drrepl | s3-check-md5",
+		Usage: "drrepl | s3-check-md5 | compare-disks-ec",
 		Value: "drrepl",
 	},
 	cli.BoolFlag{
@@ -108,17 +108,12 @@ var (
 	re        *regexp.Regexp
 )
 
-func init() {
-	re = regexp.MustCompile(`.*CORRUPTED object: (.*)$`)
-}
-
 func checkCopyArgsAndInit(ctx *cli.Context) {
 	debug = ctx.Bool("debug")
 
 	srcEndpoint = ctx.String("src-endpoint")
 	srcAccessKey = ctx.String("src-access-key")
 	srcSecretKey = ctx.String("src-secret-key")
-	srcBucket = ctx.String("src-bucket")
 	tgtEndpoint = ctx.String("endpoint")
 	tgtAccessKey = ctx.String("access-key")
 	tgtSecretKey = ctx.String("secret-key")
@@ -137,10 +132,6 @@ func checkCopyArgsAndInit(ctx *cli.Context) {
 		log.Fatalln("--secret-key is not provided for target")
 	}
 
-	if tgtBucket == "" {
-		log.Fatalln("--bucket not specified for target.")
-	}
-
 	if srcEndpoint == "" {
 		log.Fatalln("--src-endpoint is not provided")
 	}
@@ -152,24 +143,16 @@ func checkCopyArgsAndInit(ctx *cli.Context) {
 	if srcSecretKey == "" {
 		log.Fatalln("--src-secret-key is not provided")
 	}
-
-	if srcBucket == "" {
-		log.Fatalln("--src-bucket not specified.")
-	}
-	if dirPath == "" {
-		console.Fatalln(fmt.Errorf("path to working dir required, please set --data-dir flag"))
-		return
-	}
 }
 
-func initMinioClient(ctx *cli.Context, accessKey, secretKey, minioBucket, urlStr string) (*miniogo.Client, error) {
+func initMinioClient(ctx *cli.Context, accessKey, secretKey, urlStr string) (*miniogo.Client, error) {
 	target, err := url.Parse(urlStr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse input arg %s: %v", urlStr, err)
 	}
 
-	if accessKey == "" || secretKey == "" || minioBucket == "" {
-		return nil, fmt.Errorf("one or more of AccessKey:%s SecretKey: %s Bucket:%s are missing in MinIO configuration for: %s", accessKey, secretKey, minioBucket, urlStr)
+	if accessKey == "" || secretKey == "" {
+		return nil, fmt.Errorf("one or more of AccessKey:%s SecretKey: %s are missing in MinIO configuration for: %s", accessKey, secretKey, urlStr)
 	}
 	options := miniogo.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
@@ -210,11 +193,11 @@ func initMinioClient(ctx *cli.Context, accessKey, secretKey, minioBucket, urlStr
 
 func copyAction(cliCtx *cli.Context) error {
 	checkCopyArgsAndInit(cliCtx)
-	srcClient, err = initMinioClient(cliCtx, srcAccessKey, srcSecretKey, srcBucket, srcEndpoint)
+	srcClient, err = initMinioClient(cliCtx, srcAccessKey, srcSecretKey, srcEndpoint)
 	if err != nil {
 		return fmt.Errorf("could not initialize src client %w", err)
 	}
-	tgtClient, err = initMinioClient(cliCtx, tgtAccessKey, tgtSecretKey, tgtBucket, tgtEndpoint)
+	tgtClient, err = initMinioClient(cliCtx, tgtAccessKey, tgtSecretKey, tgtEndpoint)
 	if err != nil {
 		return fmt.Errorf("could not initialize tgt client %w", err)
 	}
@@ -231,6 +214,10 @@ func copyAction(cliCtx *cli.Context) error {
 		replicate = true
 	case "s3-check-md5":
 		replicate = false
+		re = regexp.MustCompile(`.*CORRUPTED object: (.*)$`)
+	case "compare-disks-ec":
+		replicate = false
+		re = regexp.MustCompile(`^CORRUPTED path=(.*), total=\d+, ecM=\d+, count=\d+$`)
 	default:
 		console.Fatalln("unknown --input-format", inputFormat)
 	}
@@ -246,6 +233,9 @@ func copyAction(cliCtx *cli.Context) error {
 	var file *os.File
 
 	if inputFile == "" {
+		if dirPath == "" {
+			console.Fatalln("--dir-path needs to be specified")
+		}
 		file, err = os.Open(path.Join(dirPath, objListFile))
 		if err != nil {
 			console.Fatalln("--input-file needs to be specified", err)
@@ -271,7 +261,7 @@ func copyAction(cliCtx *cli.Context) error {
 			if len(slc) < 3 || len(slc) > 4 {
 				slc = nil
 			}
-		case "s3-check-md5":
+		case "s3-check-md5", "compare-disks-ec":
 			matches := re.FindAllStringSubmatch(o, -1)
 			if len(matches) > 0 && len(matches[0]) >= 1 {
 				slc = strings.SplitN(matches[0][1], "/", 2)
@@ -279,7 +269,6 @@ func copyAction(cliCtx *cli.Context) error {
 				slc = append(slc, "")
 				slc = append(slc, "")
 			}
-
 		}
 
 		if len(slc) == 0 {

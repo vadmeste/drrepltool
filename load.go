@@ -233,7 +233,12 @@ func copyObject(ctx context.Context, si objInfo) error {
 		enc = oi.Metadata[strings.ToLower(ContentEncoding)]
 	}
 
-	uoi, err := tgtClient.PutObject(ctx, tgtBucket, oi.Key, obj, oi.Size, miniogo.PutObjectOptions{
+	bucket := tgtBucket
+	if bucket == "" {
+		bucket = si.bucket
+	}
+
+	uoi, err := tgtClient.PutObject(ctx, bucket, oi.Key, obj, oi.Size, miniogo.PutObjectOptions{
 		UserMetadata:    oi.UserMetadata,
 		ContentType:     oi.ContentType,
 		StorageClass:    oi.StorageClass,
@@ -273,12 +278,17 @@ func replicateObject(ctx context.Context, si objInfo) error {
 		return nil
 	}
 
+	bucket := tgtBucket
+	if bucket == "" {
+		bucket = si.bucket
+	}
+
 	if si.deleteMarker {
-		_, err = tgtClient.StatObject(ctx, tgtBucket, si.object, miniogo.StatObjectOptions{
+		_, err = tgtClient.StatObject(ctx, bucket, si.object, miniogo.StatObjectOptions{
 			VersionID: si.versionID,
 		})
 		if err.Error() == errObjectNotFound.Error() {
-			return tgtClient.RemoveObject(ctx, tgtBucket, si.object, miniogo.RemoveObjectOptions{
+			return tgtClient.RemoveObject(ctx, bucket, si.object, miniogo.RemoveObjectOptions{
 				VersionID: si.versionID,
 				Internal: miniogo.AdvancedRemoveOptions{
 					ReplicationDeleteMarker: si.deleteMarker,
@@ -299,7 +309,7 @@ func replicateObject(ctx context.Context, si objInfo) error {
 	if !ok {
 		enc = oi.Metadata[strings.ToLower(ContentEncoding)]
 	}
-	uoi, err := tgtClient.PutObject(ctx, tgtBucket, oi.Key, obj, oi.Size, miniogo.PutObjectOptions{
+	uoi, err := tgtClient.PutObject(ctx, bucket, oi.Key, obj, oi.Size, miniogo.PutObjectOptions{
 		Internal: miniogo.AdvancedPutOptions{
 			SourceMTime:       oi.LastModified,
 			SourceVersionID:   oi.VersionID,

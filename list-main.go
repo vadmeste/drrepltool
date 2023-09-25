@@ -150,7 +150,7 @@ func checkArgsAndInit(ctx *cli.Context) {
 
 func listAction(cliCtx *cli.Context) error {
 	checkArgsAndInit(cliCtx)
-	s3SrcClient, err := initMinioClient(cliCtx, srcAccessKey, srcSecretKey, srcBucket, srcEndpoint)
+	s3SrcClient, err := initMinioClient(cliCtx, srcAccessKey, srcSecretKey, srcEndpoint)
 	if err != nil {
 		log.Fatalln("Could not initialize client", err)
 	}
