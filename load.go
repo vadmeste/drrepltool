@@ -22,6 +22,8 @@ type objInfo struct {
 	object       string
 	versionID    string
 	deleteMarker bool
+
+	partSize int64 // zero means the object is single part
 }
 
 func (i objInfo) String() string {
@@ -53,7 +55,7 @@ var (
 	copyConcurrent = 100
 )
 
-func newcopyState(ctx context.Context, replicate bool) *CopyState {
+func newCopyState(ctx context.Context, replicate bool) *CopyState {
 	if runtime.GOMAXPROCS(0) > copyConcurrent {
 		copyConcurrent = runtime.GOMAXPROCS(0)
 	}
@@ -124,6 +126,7 @@ func (c *CopyState) addWorker(ctx context.Context) {
 		}
 	}()
 }
+
 func (c *CopyState) finish(ctx context.Context) {
 	close(c.objectCh)
 	c.workersWg.Wait() // wait on workers to finish
@@ -135,6 +138,7 @@ func (c *CopyState) finish(ctx context.Context) {
 		logMsg(fmt.Sprintf("Copied %d objects, %d failures", c.getCount(), c.getFailCount()))
 	}
 }
+
 func (c *CopyState) init(ctx context.Context) {
 	if c == nil {
 		return
@@ -145,7 +149,7 @@ func (c *CopyState) init(ctx context.Context) {
 	c.statusWg.Add(2)
 	go func() {
 		defer c.statusWg.Done()
-		f, err := os.OpenFile(path.Join(dirPath, getFileName(failCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		f, err := os.OpenFile(path.Join(dirPath, getFileName(failCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			logDMsg("could not create + copy_fails.txt", err)
 			return
@@ -172,7 +176,7 @@ func (c *CopyState) init(ctx context.Context) {
 	}()
 	go func() {
 		defer c.statusWg.Done()
-		f, err := os.OpenFile(path.Join(dirPath, getFileName(logCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		f, err := os.OpenFile(path.Join(dirPath, getFileName(logCopyFile, "")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			logDMsg("could not create + copy_log.txt", err)
 			return
@@ -197,7 +201,6 @@ func (c *CopyState) init(ctx context.Context) {
 			}
 		}
 	}()
-
 }
 
 var errObjectNotFound = errors.New("The specified key does not exist.")
@@ -244,6 +247,7 @@ func copyObject(ctx context.Context, si objInfo) error {
 		StorageClass:    oi.StorageClass,
 		UserTags:        oi.UserTags,
 		ContentEncoding: strings.Join(enc, ","),
+		PartSize:        uint64(si.partSize),
 	})
 	if err != nil {
 		logDMsg("upload to minio failed for "+oi.Key, err)
@@ -274,7 +278,7 @@ func replicateObject(ctx context.Context, si objInfo) error {
 	}
 	defer obj.Close()
 	if dryRun {
-		logMsg(fmt.Sprintf("%s (%s)", oi.Key, oi.VersionID))
+		logMsg(fmt.Sprintf("dry-run replicate %s (%s)", oi.Key, oi.VersionID))
 		return nil
 	}
 

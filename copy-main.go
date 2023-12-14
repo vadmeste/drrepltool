@@ -20,6 +20,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -27,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -102,8 +105,8 @@ var copyCmd = cli.Command{
 }
 
 var (
-	srcClient *miniogo.Client
-	tgtClient *miniogo.Client
+	srcClient *miniogo.Client // Good cluster
+	tgtClient *miniogo.Client // Problematic cluster
 	err       error
 	re        *regexp.Regexp
 )
@@ -143,6 +146,43 @@ func checkCopyArgsAndInit(ctx *cli.Context) {
 	if srcSecretKey == "" {
 		log.Fatalln("--src-secret-key is not provided")
 	}
+}
+
+type aliasDef struct {
+	URL       string `json:"url"`
+	AccessKey string `json:"accessKey"`
+	SecretKey string `json:"secretKey"`
+}
+
+type aliases struct {
+	Version string              `json:"version"`
+	Aliases map[string]aliasDef `json:"aliases"`
+}
+
+func initMinioClientFromAlias(ctx *cli.Context, alias string) (*miniogo.Client, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	configPath := filepath.Join(homeDir, ".mc", "config.json")
+	jsonBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var conf aliases
+	err = json.Unmarshal(jsonBytes, &conf)
+	if err != nil {
+		return nil, err
+	}
+
+	info, ok := conf.Aliases[alias]
+	if !ok {
+		return nil, errors.New("unknown alias")
+	}
+
+	return initMinioClient(ctx, info.AccessKey, info.SecretKey, info.URL)
 }
 
 func initMinioClient(ctx *cli.Context, accessKey, secretKey, urlStr string) (*miniogo.Client, error) {
@@ -226,7 +266,7 @@ func copyAction(cliCtx *cli.Context) error {
 		replicate = !cliCtx.Bool("simple-copy")
 	}
 
-	copyState = newcopyState(ctx, replicate)
+	copyState = newCopyState(ctx, replicate)
 	copyState.init(ctx)
 
 	var err error
