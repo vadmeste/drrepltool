@@ -25,8 +25,9 @@ import (
 var version = "(dev)"
 
 var subcommands = []cli.Command{
-	listCmd,
-	copyCmd,
+	// listCmd,
+	// copyCmd,
+	autoFixCmd,
 }
 
 // mainAction is the handle for "hcp-to-minio" command.
@@ -36,7 +37,7 @@ func mainAction(ctx *cli.Context) error {
 		os.Exit(1)
 	}
 	command := ctx.Args().First()
-	if command != "list" && command != "copy" {
+	if command != "list" && command != "copy" && command != "auto-fix" {
 		cli.ShowCommandHelp(ctx, "")
 		os.Exit(1)
 	}
@@ -48,7 +49,7 @@ func main() {
 	app.Name = os.Args[0]
 	app.Author = "MinIO, Inc."
 	app.Version = version
-	app.Description = `copy tool to re-replicate from DR to primary MinIO`
+	app.Description = `copy tool to re-replicate/fix objects between two MinIO clusters`
 	app.Flags = []cli.Flag{}
 	app.Action = mainAction
 	app.Commands = subcommands
