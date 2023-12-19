@@ -132,7 +132,7 @@ func autoFixAction(cliCtx *cli.Context) error {
 	copyState = newCopyState(ctx, true) // replicate instead of a simple copy
 	copyState.init(ctx)
 
-	bucket := "" // Get from the CLI
+	bucket := cliCtx.String("bucket")
 
 	var buckets []string
 	if bucket != "" {
