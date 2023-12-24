@@ -60,6 +60,15 @@ var autoFixFlags = []cli.Flag{
 		Name:  "modified-since",
 		Usage: "minimum modtime for object check",
 	},
+	cli.IntFlag{
+		Name:  "skip",
+		Usage: "number of listing output entries to skip",
+	},
+	cli.IntFlag{
+		Name:  "workers",
+		Usage: "the number of workers that download/check objects integrity",
+		Value: 4,
+	},
 }
 
 var autoFixCmd = cli.Command{
@@ -177,8 +186,18 @@ func autoFixAction(cliCtx *cli.Context) error {
 	dryRun = cliCtx.Bool("dry-run")
 
 	minModTimeStr = cliCtx.String("modified-since")
+	skip := cliCtx.Int("skip")
+	workers := cliCtx.Int("workers")
 
 	args := cliCtx.Args()
+
+	if len(args) != 2 {
+		log.Println("Exactly two arguments are requires for this tool to be executed.")
+		log.Println("USAGE:")
+		log.Println("    " + os.Args[0] + " <CLUSTERS-WITH-GOOD-OBJECTS>  <CLUSTER-WITH-BAD-OBJECT>")
+		log.Fatal("exiting..")
+	}
+
 	srcClient, err = initMinioClientFromAlias(cliCtx, args[0])
 	if err != nil {
 		return fmt.Errorf("could not initialize src client %w", err)
@@ -226,7 +245,7 @@ func autoFixAction(cliCtx *cli.Context) error {
 
 	objectsListed := 0
 
-	tokens := make(chan struct{}, 24)
+	tokens := make(chan struct{}, workers)
 
 	for _, bucket := range buckets {
 		opts := minio.ListObjectsOptions{
@@ -263,6 +282,9 @@ func autoFixAction(cliCtx *cli.Context) error {
 				continue
 			}
 			if v, ok := object.UserMetadata["X-Amz-Server-Side-Encryption"]; ok && v == "aws:kms" {
+				continue
+			}
+			if skip > 0 && objectsListed < skip {
 				continue
 			}
 			parts := 1
