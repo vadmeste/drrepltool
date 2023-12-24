@@ -25,6 +25,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -246,6 +247,7 @@ func autoFixAction(cliCtx *cli.Context) error {
 	objectsListed := 0
 
 	tokens := make(chan struct{}, workers)
+	md5WG := sync.WaitGroup{}
 
 	for _, bucket := range buckets {
 		opts := minio.ListObjectsOptions{
@@ -304,14 +306,17 @@ func autoFixAction(cliCtx *cli.Context) error {
 				continue
 			}
 
+			md5WG.Add(1)
 			tokens <- struct{}{}
 			go func(multipart bool, parts int, bucket, key, versionID, etag string) {
 				checkMD5(multipart, parts, bucket, key, versionID, etag)
 				<-tokens
+				md5WG.Done()
 			}(multipart, parts, bucket, object.Key, object.VersionID, object.ETag)
 		}
 	}
 
+	md5WG.Wait()
 	copyState.finish(ctx)
 
 	end := time.Now()
