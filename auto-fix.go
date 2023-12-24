@@ -81,7 +81,74 @@ var autoFixCmd = cli.Command{
  `,
 }
 
-func tryToFixThisObject(cliCtx *cli.Context, copyState *CopyState, obj objInfo) error {
+func checkMD5(multipart bool, parts int, bucket, key, versionID, etag string) {
+	var partsMD5Sum [][]byte
+	var partSize int64
+	var failedMD5 bool
+	for p := 1; p <= parts; p++ {
+		opts := minio.GetObjectOptions{
+			VersionID:  versionID,
+			PartNumber: p,
+		}
+		obj, err := tgtClient.GetObject(context.Background(), bucket, key, opts)
+		if err != nil {
+			failedMD5 = true
+			break
+		}
+		h := md5.New()
+		n, err := io.Copy(h, obj)
+		obj.Close()
+		if err != nil {
+			failedMD5 = true
+			break
+		} else {
+			if p == 1 && multipart {
+				partSize = n
+			}
+		}
+		partsMD5Sum = append(partsMD5Sum, h.Sum(nil))
+	}
+
+	if failedMD5 {
+		tryToFixThisObject(copyState,
+			objInfo{
+				bucket:    bucket,
+				object:    key,
+				versionID: versionID,
+				partSize:  partSize,
+			})
+		return
+	}
+
+	corrupted := false
+	if !multipart {
+		md5sum := fmt.Sprintf("%x", partsMD5Sum[0])
+		if md5sum != etag {
+			corrupted = true
+		}
+	} else {
+		var totalMD5SumBytes []byte
+		for _, sum := range partsMD5Sum {
+			totalMD5SumBytes = append(totalMD5SumBytes, sum...)
+		}
+		s3MD5 := fmt.Sprintf("%x-%d", getMD5Sum(totalMD5SumBytes), parts)
+		if s3MD5 != etag {
+			corrupted = true
+		}
+	}
+
+	if corrupted {
+		tryToFixThisObject(copyState,
+			objInfo{
+				bucket:    bucket,
+				object:    key,
+				versionID: versionID,
+				partSize:  partSize,
+			})
+	}
+}
+
+func tryToFixThisObject(copyState *CopyState, obj objInfo) error {
 	copyState.queueUploadTask(obj)
 	logDMsg(fmt.Sprintf("adding %s to copy queue", obj), nil)
 	return nil
@@ -159,6 +226,8 @@ func autoFixAction(cliCtx *cli.Context) error {
 
 	objectsListed := 0
 
+	tokens := make(chan struct{}, 24)
+
 	for _, bucket := range buckets {
 		opts := minio.ListObjectsOptions{
 			Recursive:    true,
@@ -213,70 +282,11 @@ func autoFixAction(cliCtx *cli.Context) error {
 				continue
 			}
 
-			var partsMD5Sum [][]byte
-			var partSize int64
-			var failedMD5 bool
-			for p := 1; p <= parts; p++ {
-				opts := minio.GetObjectOptions{
-					VersionID:  object.VersionID,
-					PartNumber: p,
-				}
-				obj, err := tgtClient.GetObject(context.Background(), bucket, object.Key, opts)
-				if err != nil {
-					failedMD5 = true
-					break
-				}
-				h := md5.New()
-				n, err := io.Copy(h, obj)
-				obj.Close()
-				if err != nil {
-					failedMD5 = true
-					break
-				} else {
-					if p == 1 && multipart {
-						partSize = n
-					}
-				}
-				partsMD5Sum = append(partsMD5Sum, h.Sum(nil))
-			}
-
-			if failedMD5 {
-				tryToFixThisObject(cliCtx, copyState,
-					objInfo{
-						bucket:    bucket,
-						object:    object.Key,
-						versionID: object.VersionID,
-						partSize:  partSize,
-					})
-				continue
-			}
-
-			corrupted := false
-			if !multipart {
-				md5sum := fmt.Sprintf("%x", partsMD5Sum[0])
-				if md5sum != object.ETag {
-					corrupted = true
-				}
-			} else {
-				var totalMD5SumBytes []byte
-				for _, sum := range partsMD5Sum {
-					totalMD5SumBytes = append(totalMD5SumBytes, sum...)
-				}
-				s3MD5 := fmt.Sprintf("%x-%d", getMD5Sum(totalMD5SumBytes), parts)
-				if s3MD5 != object.ETag {
-					corrupted = true
-				}
-			}
-
-			if corrupted {
-				tryToFixThisObject(cliCtx, copyState,
-					objInfo{
-						bucket:    bucket,
-						object:    object.Key,
-						versionID: object.VersionID,
-						partSize:  partSize,
-					})
-			}
+			tokens <- struct{}{}
+			go func(multipart bool, parts int, bucket, key, versionID, etag string) {
+				checkMD5(multipart, parts, bucket, key, versionID, etag)
+				<-tokens
+			}(multipart, parts, bucket, object.Key, object.VersionID, object.ETag)
 		}
 	}
 
