@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -96,6 +97,15 @@ func getMD5Sum(data []byte) []byte {
 }
 
 func autoFixAction(cliCtx *cli.Context) error {
+	if os.Getenv("PROFILING") != "" {
+		stop, err := enableProfilers([]string{"cpu", "mem", "goroutine"})
+		if err != nil {
+			log.Fatal("unable to start profiling")
+		}
+		defer stop()
+
+	}
+
 	logFlag = true
 	dryRun = cliCtx.Bool("dry-run")
 
@@ -217,7 +227,9 @@ func autoFixAction(cliCtx *cli.Context) error {
 					break
 				}
 				h := md5.New()
-				if n, err := io.Copy(h, obj); err != nil {
+				n, err := io.Copy(h, obj)
+				obj.Close()
+				if err != nil {
 					failedMD5 = true
 					break
 				} else {
